@@ -33,8 +33,8 @@ parser.add_argument('--input',required=False, default='/dev/video0', help='Speci
 parser.add_argument('--header',required=False, default='tfs2mqtt', help='Specify the MQTT topic header')
 parser.add_argument('--id',required=False, default='camera1', help='Unique identifier for MQTT topic')
 parser.add_argument('--category',required=False, default='object', help='Specify the default detection category')
-parser.add_argument('--width', required=False, help='How the input image width should be resized in pixels', default=1200, type=int)
-parser.add_argument('--height', required=False, help='How the input image width should be resized in pixels', default=800, type=int)
+parser.add_argument('--width', required=False, help='How the input image width should be resized in pixels', default=600, type=int)
+parser.add_argument('--height', required=False, help='How the input image width should be resized in pixels', default=600, type=int)
 parser.add_argument('--confidence', required=False, help='Confidence threshold to include detection', default=0.75, type=float)
 parser.add_argument('--grpc_address',required=False, default='localhost',  help='Specify url to grpc service. default:localhost')
 parser.add_argument('--grpc_port',required=False, default=9000, help='Specify port to grpc service. default: 9000')
@@ -76,24 +76,26 @@ if(vcap.open(args['input']) == False):
 print('Start processing frames...')
 
 while(1):
-    imgs = np.zeros((0,3,args['height'],args['width']), np.dtype('<f'))
-
     ret, img = vcap.read()
     
     if(ret == False):
         print('Failed to get frame from camera...')
         continue;
         
+    # Get original image shape
+    orig_height, orig_width, orig_channels = img.shape
+
     timestamp_str = datetime.utcnow().isoformat()+"Z"
     
     img = cv2.resize(img, (args['width'], args['height']))
     img = img.transpose(2,0,1).reshape(1,3,args['height'],args['width'])
+
+    imgs = np.zeros((0,3,args['height'],args['width']), np.dtype('<f'))
     imgs = np.append(imgs, img, axis=0)
 
     request = predict_pb2.PredictRequest()
     request.model_spec.name = args['model_name']
     request.inputs["data"].CopyFrom(make_tensor_proto(imgs, shape=(imgs.shape)))
-    
 
     if args.get('perf_stats'):
         start_time = datetime.now()
@@ -114,10 +116,10 @@ while(1):
         _, class_id, confidence, x_min, y_min, x_max, y_max = detection
 
         if confidence > args['confidence']:
-            x_min = int(x_min * args['width'])
-            y_min = int(y_min * args['height'])
-            x_max = int(x_max * args['width'])
-            y_max = int(y_max * args['height'])
+            x_min = int(x_min * orig_width)
+            y_min = int(y_min * orig_height)
+            x_max = int(x_max * orig_width)
+            y_max = int(y_max * orig_height)
             w = int(x_max - x_min)
             h = int(y_max - y_min)
 
