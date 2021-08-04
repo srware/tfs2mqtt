@@ -1,5 +1,4 @@
 futures
 opencv-python
 tensorflow-serving-api==2.*
-getmac
 paho-mqtt
