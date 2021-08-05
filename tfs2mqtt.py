@@ -36,6 +36,7 @@ parser.add_argument('--category',required=False, default='object', help='Specify
 parser.add_argument('--width', required=False, help='How the input image width should be resized in pixels', default=600, type=int)
 parser.add_argument('--height', required=False, help='How the input image width should be resized in pixels', default=600, type=int)
 parser.add_argument('--confidence', required=False, help='Confidence threshold to include detection', default=0.75, type=float)
+parser.add_argument('--threads', required=False, help='Limit CPU usage for camera processing', default=10, type=int)
 parser.add_argument('--grpc_address',required=False, default='localhost',  help='Specify url to grpc service. default:localhost')
 parser.add_argument('--grpc_port',required=False, default=9000, help='Specify port to grpc service. default: 9000')
 parser.add_argument('--mqtt_address',required=False, default='localhost',  help='MQTT broker address. default:localhost')
@@ -65,6 +66,9 @@ else:
     channel = grpc.insecure_channel(address)
 
 stub = prediction_service_pb2_grpc.PredictionServiceStub(channel)
+
+# Limit OpenCV thread pool
+cv2.setNumThreads(args['threads'])
 
 vcap = cv2.VideoCapture()
 vcap.set(cv2.CAP_PROP_FPS, 15)
