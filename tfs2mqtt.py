@@ -25,7 +25,7 @@ from tensorflow import make_tensor_proto, make_ndarray
 from tensorflow_serving.apis import predict_pb2
 from tensorflow_serving.apis import prediction_service_pb2_grpc
 from client_utils import prepare_certs
-from datetime import datetime
+from datetime import datetime, timezone
 
 parser = argparse.ArgumentParser(description='TFS gRPC to MQTT client.')
 
@@ -77,16 +77,16 @@ print('Start processing frames...')
 
 while(1):
     ret, img = vcap.read()
-    
+
     if(ret == False):
         print('Failed to get frame from camera...')
         continue;
-        
+
     # Get original image shape
     orig_height, orig_width, orig_channels = img.shape
 
-    timestamp_str = datetime.utcnow().isoformat()+"Z"
-    
+    timestamp_str = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
     img = cv2.resize(img, (args['width'], args['height']))
     img = img.transpose(2,0,1).reshape(1,3,args['height'],args['width'])
 
@@ -109,7 +109,7 @@ while(1):
 
     result = make_ndarray(result.outputs["detection_out"])
     detections = result.reshape(-1, 7)
-    
+
     objects = []
 
     for i, detection in enumerate(detections):
@@ -125,12 +125,6 @@ while(1):
 
             if args.get('debug'):
                 print("detection", i , detection)
-                print("x_min", x_min)
-                print("y_min", y_min)
-                print("x_max", x_max)
-                print("y_max", y_max)
-                print("w", w)
-                print("h", h)
 
             objects.append({"id":i, "category":args['category'],"confidence":float(confidence), "bounding_box":{"x": x_min, "y": y_min, "width": w, "height": h}})
 
