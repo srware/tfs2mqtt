@@ -15,12 +15,13 @@
 #
 
 import argparse
+import base64
 import cv2
 import grpc
 import numpy as np
 import json
 import os
-import paho.mqtt.publish as publish
+import paho.mqtt.client as mqtt
 from tensorflow import make_tensor_proto, make_ndarray
 from tensorflow_serving.apis import predict_pb2
 from tensorflow_serving.apis import prediction_service_pb2_grpc
@@ -53,6 +54,12 @@ args = vars(parser.parse_args())
 address = "{}:{}".format(args['grpc_address'],args['grpc_port'])
 
 mqtt_topic = ''.join([args['header'], "/", "data", "/", "sensor", "/", args['id'], "/", args['category']])
+command_topic = ''.join([args['header'], "/", "cmd", "/", "sensor", "/", "cam", "/", args['id']])
+image_topic = ''.join([args['header'], "/", "image", "/", "sensor", "/", "cam", "/", args['id']])
+
+# Camera frame & timestamp
+curr_frame = None
+curr_timestamp = None
 
 channel = None
 if args.get('tls'):
@@ -67,17 +74,37 @@ else:
 
 stub = prediction_service_pb2_grpc.PredictionServiceStub(channel)
 
+def on_connect(mqttc, obj, flags, rc):
+    print("MQTT connected...")
+
+
+def on_message(mqttc, obj, msg):
+    payload = msg.payload.decode("utf-8")
+    if payload == 'getimage' and not curr_frame is None:
+        ret, jpeg = cv2.imencode(".jpg", curr_frame)
+        jpeg = base64.b64encode(jpeg).decode('utf-8')
+        image_payload = {'timestamp':curr_timestamp.isoformat().replace("+00:00", "Z"), 'id':args['id'], 'image':jpeg}
+        mqttc.publish(image_topic, json.dumps(image_payload))
+
+# Create MQTT client
+mqttc = mqtt.Client()
+mqttc.on_message = on_message
+mqttc.on_connect = on_connect
+mqttc.connect(args['mqtt_address'], args['mqtt_port'], 60)
+mqttc.subscribe(command_topic, 0)
+
 # Limit OpenCV thread pool
 cv2.setNumThreads(args['threads'])
 
 vcap = cv2.VideoCapture()
-vcap.set(cv2.CAP_PROP_FPS, 15)
 
 if(vcap.open(args['input']) == False):
     print('Failed to open camera stream... quitting!')
     quit()
 
 print('Start processing frames...')
+
+mqttc.loop_start()
 
 while(1):
     ret, img = vcap.read()
@@ -87,9 +114,11 @@ while(1):
         continue;
 
     # Get original image shape
+    curr_frame = img.copy()
     orig_height, orig_width, orig_channels = img.shape
 
-    timestamp_str = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    curr_timestamp = datetime.now(timezone.utc)
+    timestamp_str = curr_timestamp.isoformat().replace("+00:00", "Z")
 
     img = cv2.resize(img, (args['width'], args['height']))
     img = img.transpose(2,0,1).reshape(1,3,args['height'],args['width'])
@@ -132,5 +161,5 @@ while(1):
 
             objects.append({"id":i, "category":args['category'],"confidence":float(confidence), "bounding_box":{"x": x_min, "y": y_min, "width": w, "height": h}})
 
-    mqtt_payload ={"timestamp":timestamp_str,"id":args['id'], "objects":objects}
-    publish.single(mqtt_topic, json.dumps(mqtt_payload), hostname=args['mqtt_address'], port=args['mqtt_port'], auth=None)
+    mqtt_payload ={"timestamp":timestamp_str,"id":args['id'],"objects":objects}
+    mqttc.publish(mqtt_topic, json.dumps(mqtt_payload))
