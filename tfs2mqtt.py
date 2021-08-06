@@ -77,13 +77,12 @@ stub = prediction_service_pb2_grpc.PredictionServiceStub(channel)
 def on_connect(mqttc, obj, flags, rc):
     print("MQTT connected...")
 
-
 def on_message(mqttc, obj, msg):
     payload = msg.payload.decode("utf-8")
     if payload == 'getimage' and not curr_frame is None:
         ret, jpeg = cv2.imencode(".jpg", curr_frame)
         jpeg = base64.b64encode(jpeg).decode('utf-8')
-        image_payload = {'timestamp':curr_timestamp.isoformat().replace("+00:00", "Z"), 'id':args['id'], 'image':jpeg}
+        image_payload = {'timestamp':curr_timestamp.isoformat(timespec='milliseconds').replace("+00:00", "Z"), 'id':args['id'], 'image':jpeg}
         mqttc.publish(image_topic, json.dumps(image_payload))
 
 # Create MQTT client
@@ -118,7 +117,8 @@ while(1):
     orig_height, orig_width, orig_channels = img.shape
 
     curr_timestamp = datetime.now(timezone.utc)
-    timestamp_str = curr_timestamp.isoformat().replace("+00:00", "Z")
+
+    timestamp_str = curr_timestamp.isoformat(timespec='milliseconds').replace("+00:00", "Z")
 
     img = cv2.resize(img, (args['width'], args['height']))
     img = img.transpose(2,0,1).reshape(1,3,args['height'],args['width'])
