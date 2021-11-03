@@ -42,6 +42,8 @@ parser.add_argument('--grpc_address',required=False, default='localhost',  help=
 parser.add_argument('--grpc_port',required=False, default=9000, help='Specify port to grpc service. default: 9000')
 parser.add_argument('--mqtt_address',required=False, default='localhost',  help='MQTT broker address. default:localhost')
 parser.add_argument('--mqtt_port',required=False, default=1883, help='MQTT port. default: 1883')
+parser.add_argument('--mqtt_username',required=False, default='',  help='MQTT username.')
+parser.add_argument('--mqtt_password',required=False, default='',  help='MQTT password.')
 parser.add_argument('--model_name',required=True, help='Specify the model name')
 parser.add_argument('--tls', default=False, action='store_true', help='use TLS communication with gRPC endpoint')
 parser.add_argument('--perf_stats', default=False, action='store_true', help='Print performance statistics')
@@ -89,6 +91,7 @@ def on_message(mqttc, obj, msg):
 mqttc = mqtt.Client()
 mqttc.on_message = on_message
 mqttc.on_connect = on_connect
+mqttc.username_pw_set(args['mqtt_username'],args['mqtt_password'])
 mqttc.connect(args['mqtt_address'], args['mqtt_port'], 60)
 mqttc.subscribe(command_topic, 0)
 
