@@ -100,7 +100,7 @@ if args.get('mqtt_tls'):
     mqttc.tls_set(cert_reqs=ssl.CERT_NONE)
     mqttc.tls_insecure_set(True)
 
-mqttc.connect(args['mqtt_address'], args['mqtt_port'], 60)
+mqttc.connect(args['mqtt_address'], int(args['mqtt_port']), 60)
 mqttc.subscribe(command_topic, 0)
 
 # Limit OpenCV thread pool
