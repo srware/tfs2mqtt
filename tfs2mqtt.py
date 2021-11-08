@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 parser = argparse.ArgumentParser(description='TFS gRPC to MQTT client.')
 
 parser.add_argument('--input',required=False, default='/dev/video0', help='Specify the video input')
+parser.add_argument('--loop', default=False, action='store_true', help='Loop input video')
 parser.add_argument('--header',required=False, default='tfs2mqtt', help='Specify the MQTT topic header')
 parser.add_argument('--id',required=False, default='camera1', help='Unique identifier for MQTT topic')
 parser.add_argument('--category',required=False, default='object', help='Specify the default detection category')
@@ -99,9 +100,11 @@ mqttc.subscribe(command_topic, 0)
 cv2.setNumThreads(args['threads'])
 
 vcap = cv2.VideoCapture()
+status = vcap.open(args['input'])
 
-if(vcap.open(args['input']) == False):
-    print('Failed to open camera stream... quitting!')
+# Test for camera stream
+if not status:
+    print('Failed to open video stream... quitting!')
     quit()
 
 print('Start processing frames...')
@@ -109,11 +112,19 @@ print('Start processing frames...')
 mqttc.loop_start()
 
 while(1):
-    ret, img = vcap.read()
+    status, img = vcap.read()
 
-    if(ret == False):
-        print('Failed to get frame from camera...')
-        continue;
+    if not status:
+        # Loop video is applicable
+        if not args.get('loop'):
+            print('No more frames available... Quitting!')
+            quit()
+
+        vcap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        status, img = vcap.read()
+
+        if not status:
+            quit()
 
     # Get original image shape
     curr_frame = img.copy()
