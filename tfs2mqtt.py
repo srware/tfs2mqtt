@@ -22,6 +22,7 @@ import numpy as np
 import json
 import os
 import paho.mqtt.client as mqtt
+import ssl
 from tensorflow import make_tensor_proto, make_ndarray
 from tensorflow_serving.apis import predict_pb2
 from tensorflow_serving.apis import prediction_service_pb2_grpc
@@ -45,13 +46,14 @@ parser.add_argument('--mqtt_address',required=False, default='localhost',  help=
 parser.add_argument('--mqtt_port',required=False, default=1883, help='MQTT port. default: 1883')
 parser.add_argument('--mqtt_username',required=False, default='',  help='MQTT username.')
 parser.add_argument('--mqtt_password',required=False, default='',  help='MQTT password.')
+parser.add_argument('--mqtt_tls', default=False, action='store_true', help='use TLS communication for MQTT')
 parser.add_argument('--model_name',required=True, help='Specify the model name')
-parser.add_argument('--tls', default=False, action='store_true', help='use TLS communication with gRPC endpoint')
+parser.add_argument('--grpc_tls', default=False, action='store_true', help='use TLS communication with gRPC endpoint')
 parser.add_argument('--perf_stats', default=False, action='store_true', help='Print performance statistics')
 parser.add_argument('--debug', default=False, action='store_true', help='Print debug information')
-parser.add_argument('--server_cert', required=False, help='Path to server certificate')
-parser.add_argument('--client_cert', required=False, help='Path to client certificate')
-parser.add_argument('--client_key', required=False, help='Path to client key')
+parser.add_argument('--grpc_server_cert', required=False, help='Path to gRPC server certificate')
+parser.add_argument('--grpc_client_cert', required=False, help='Path to gRPC client certificate')
+parser.add_argument('--grpc_client_key', required=False, help='Path to gRPC client key')
 args = vars(parser.parse_args())
 
 address = "{}:{}".format(args['grpc_address'],args['grpc_port'])
@@ -65,10 +67,10 @@ curr_frame = None
 curr_timestamp = None
 
 channel = None
-if args.get('tls'):
-    server_ca_cert, client_key, client_cert = prepare_certs(server_cert=args['server_cert'],
-                                                            client_key=args['client_key'],
-                                                            client_ca=args['client_cert'])
+if args.get('grpc_tls'):
+    server_ca_cert, client_key, client_cert = prepare_certs(server_cert=args['grpc_server_cert'],
+                                                            client_key=args['grpc_client_key'],
+                                                            client_ca=args['grpc_client_cert'])
     creds = grpc.ssl_channel_credentials(root_certificates=server_ca_cert,
                                          private_key=client_key, certificate_chain=client_cert)
     channel = grpc.secure_channel(address, creds)
@@ -93,6 +95,11 @@ mqttc = mqtt.Client()
 mqttc.on_message = on_message
 mqttc.on_connect = on_connect
 mqttc.username_pw_set(args['mqtt_username'],args['mqtt_password'])
+
+if args.get('mqtt_tls'):
+    mqttc.tls_set(cert_reqs=ssl.CERT_NONE)
+    mqttc.tls_insecure_set(True)
+
 mqttc.connect(args['mqtt_address'], args['mqtt_port'], 60)
 mqttc.subscribe(command_topic, 0)
 
