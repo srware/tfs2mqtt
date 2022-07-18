@@ -70,7 +70,7 @@ mqtt_port = args.get('mqtt_port')
 mqtt_username = args.get('mqtt_username')
 mqtt_password = args.get('mqtt_password')
 
-mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", instance_id, "/", category])
+mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", category, "/", instance_id])
 command_topic = ''.join([header, "/", "cmd", "/", "sensor", "/", "cam", "/", instance_id])
 image_topic = ''.join([header, "/", "image", "/", "sensor", "/", "cam", "/", instance_id])
 
@@ -192,7 +192,7 @@ while(1):
             if args.get('debug'):
                 print("detection", i , detection)
 
-            objects.append({"id":i, "category":category,"confidence":float(confidence), "bounding_box":{"x": x_min, "y": y_min, "width": w, "height": h}})
+            objects.append({"id":i, "category":category, "class":int(class_id), "confidence":float(confidence), "bounding_box":{"x": x_min, "y": y_min, "width": w, "height": h}})
 
     mqtt_payload ={"timestamp":timestamp_str,"id":instance_id,"objects":objects}
     mqttc.publish(mqtt_topic, json.dumps(mqtt_payload))
