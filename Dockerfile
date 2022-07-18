@@ -3,7 +3,8 @@ FROM ubuntu:20.04
 ARG DEPS="\
     python3 \
     python3-pip \
-    python3-opencv \
+    libgl1 \
+    libglib2.0-0 \
 "
 
 ADD . /app

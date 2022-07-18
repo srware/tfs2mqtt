@@ -27,3 +27,9 @@ def prepare_certs(server_cert=None, client_key=None, client_ca=None):
         with open(client_ca, 'rb') as ca:
             client_ca = ca.read()
     return server_cert, client_key, client_ca
+
+def get_model_io_names(client, model_name, model_version):
+    metadata = client.get_model_metadata(model_name, model_version)
+    input_name = next(iter(metadata['inputs']))
+    output_name = next(iter(metadata['outputs']))
+    return input_name, output_name
