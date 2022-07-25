@@ -224,6 +224,6 @@ if mode == 'video':
         height, width, channels = img.shape
         curr_frame = frame.copy()
 
-        _thread.start_new_thread( (timestamp_str, instance_id, height, width, frame) )
+        _thread.start_new_thread( process_frame, (timestamp_str, instance_id, height, width, frame) )
 else:
     mqttc.loop_forever()
