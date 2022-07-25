@@ -200,7 +200,7 @@ if mode == 'video':
         status, img = vcap.read()
 
         if not status:
-            # Loop video is applicable
+            # Loop video if applicable
             if not args.get('loop'):
                 print('No more frames available... Quitting!')
                 quit()
@@ -211,17 +211,17 @@ if mode == 'video':
             if not status:
                 quit()
 
-            curr_timestamp = datetime.now(timezone.utc)
-            timestamp_str = curr_timestamp.isoformat(timespec='milliseconds').replace("+00:00", "Z")
+        curr_timestamp = datetime.now(timezone.utc)
+        timestamp_str = curr_timestamp.isoformat(timespec='milliseconds').replace("+00:00", "Z")
 
-            # Scale if requested
-            if args.get('width') and args.get('height'):
-                img = cv2.resize(img, (args.get('width'), args.get('height')))
+        # Scale if requested
+        if args.get('width') and args.get('height'):
+            img = cv2.resize(img, (args.get('width'), args.get('height')))
 
-            # Get original image shape
-            ret, curr_frame = cv2.imencode(".jpg", img)
-            height, width, channels = img.shape
+        # Get original image shape
+        ret, curr_frame = cv2.imencode(".jpg", img)
+        height, width, channels = img.shape
 
-            process_frame(timestamp_str, instance_id, height, width, img)
+        process_frame(timestamp_str, instance_id, height, width, img)
 else:
     mqttc.loop_forever()
