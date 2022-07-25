@@ -222,6 +222,6 @@ if mode == 'video':
         ret, curr_frame = cv2.imencode(".jpg", img)
         height, width, channels = img.shape
 
-        process_frame(timestamp_str, instance_id, height, width, img)
+        process_frame(timestamp_str, instance_id, height, width, curr_frame)
 else:
     mqttc.loop_forever()
