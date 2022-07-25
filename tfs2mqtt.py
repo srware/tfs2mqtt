@@ -23,6 +23,7 @@ import json
 import os
 import paho.mqtt.client as mqtt
 import ssl
+import _thread
 from client_utils import prepare_certs, get_model_io_names
 from datetime import datetime, timezone
 from ovmsclient import make_grpc_client
@@ -160,7 +161,7 @@ def on_message(mqttc, obj, msg):
         # Check payload
         if "timestamp" in json_payload and "id" in json_payload and "height" in json_payload and "width" in json_payload and "frame" in json_payload:
             img = base64.b64decode(json_payload['frame'])
-            process_frame(json_payload['timestamp'], json_payload['id'], json_payload['height'], json_payload['width'], np.frombuffer(img, dtype=np.uint8))
+            _thread.start_new_thread( process_frame, (json_payload['timestamp'], json_payload['id'], json_payload['height'], json_payload['width'], np.frombuffer(img, dtype=np.uint8)) )
 
 mqttc = mqtt.Client()
 mqttc.on_message = on_message
@@ -219,9 +220,10 @@ if mode == 'video':
             img = cv2.resize(img, (args.get('width'), args.get('height')))
 
         # Get original image shape
-        ret, curr_frame = cv2.imencode(".jpg", img)
+        ret, frame = cv2.imencode(".jpg", img)
         height, width, channels = img.shape
+        curr_frame = frame.copy()
 
-        process_frame(timestamp_str, instance_id, height, width, curr_frame)
+        _thread.start_new_thread( (timestamp_str, instance_id, height, width, frame) )
 else:
     mqttc.loop_forever()
