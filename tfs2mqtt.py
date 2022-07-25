@@ -84,7 +84,6 @@ def process_frame(timestamp, id, height, width, frame):
     if args.get('perf_stats'):
         start_time = datetime.now()
 
-    input_name, output_name = get_model_io_names(client, model_name, model_version)
     inputs = {input_name: frame.tobytes() }
     results = client.predict(inputs=inputs, model_name=model_name)
 
@@ -132,6 +131,7 @@ if args.get('grpc_tls'):
     }
 
 client = make_grpc_client(address, tls_config=tls_config)
+input_name, output_name = get_model_io_names(client, model_name, model_version)
 
 #
 # Create MQTT client
