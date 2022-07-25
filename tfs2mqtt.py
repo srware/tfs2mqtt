@@ -24,6 +24,7 @@ import os
 import paho.mqtt.client as mqtt
 import ssl
 import _thread
+import time
 from client_utils import prepare_certs, get_model_io_names
 from datetime import datetime, timezone
 from ovmsclient import make_grpc_client
@@ -82,15 +83,10 @@ mode = None
 
 def process_frame(timestamp, id, height, width, frame):
     if args.get('perf_stats'):
-        start_time = datetime.now()
+        start_time = time.perf_counter()
 
     inputs = {input_name: frame.tobytes() }
     results = client.predict(inputs=inputs, model_name=model_name)
-
-    if args.get('perf_stats'):
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds() * 1000
-        print('Processing time: {:.2f} ms; speed {:.2f} fps'.format(round(duration, 2), round(1000 / duration, 2)))
 
     detections = results[0].reshape(-1, 7)
 
@@ -111,6 +107,11 @@ def process_frame(timestamp, id, height, width, frame):
                 print("detection", i , detection)
 
             objects.append({"id":i, "category":category, "class":int(class_id), "confidence":float(confidence), "bounding_box":{"x": x_min, "y": y_min, "width": w, "height": h}})
+
+    if args.get('perf_stats'):
+        end_time = time.perf_counter()
+        duration = (end_time - start_time) * 1000
+        print('Processing time: {:.2f} ms; speed {:.2f} fps'.format(round(duration, 2), round(1000 / duration, 2)))
 
     mqtt_payload = {"timestamp":timestamp,"id":id,"objects":objects}
     mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", category, "/", id])
