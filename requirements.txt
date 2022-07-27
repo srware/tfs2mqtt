@@ -3,3 +3,4 @@ numpy==1.19.5
 opencv-python
 ovmsclient==2022.1
 paho-mqtt
+python-dateutil
