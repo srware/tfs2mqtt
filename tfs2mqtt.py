@@ -85,6 +85,10 @@ def process_frame(timestamp, id, height, width, frame):
     if args.get('perf_stats'):
         start_time = time.perf_counter()
 
+    if mode == 'mqtt':
+        frame = base64.b64decode(frame)
+        frame = np.frombuffer(frame, dtype=np.uint8)
+
     inputs = {input_name: frame.tobytes() }
     results = client.predict(inputs=inputs, model_name=model_name)
 
@@ -162,8 +166,7 @@ def on_message(mqttc, obj, msg):
         # Check payload
         if "timestamp" in json_payload and "id" in json_payload and "height" in json_payload and "width" in json_payload and "frame" in json_payload:
             timestamp = json_payload['timestamp'].replace("+00:00", "Z")
-            img = base64.b64decode(json_payload['frame'])
-            _thread.start_new_thread( process_frame, (timestamp, json_payload['id'], json_payload['height'], json_payload['width'], np.frombuffer(img, dtype=np.uint8)) )
+            _thread.start_new_thread( process_frame, (timestamp, json_payload['id'], json_payload['height'], json_payload['width'], json_payload['frame']) )
 
 mqttc = mqtt.Client()
 mqttc.on_message = on_message
