@@ -23,7 +23,8 @@ import json
 import os
 import paho.mqtt.client as mqtt
 import ssl
-import _thread
+import threading
+import queue
 import time
 from client_utils import prepare_certs, get_model_io_names
 from datetime import datetime, timezone
@@ -39,7 +40,7 @@ parser.add_argument('--category',required=False, default='object', help='Specify
 parser.add_argument('--width', required=False, help='Specify desired input image width', type=int)
 parser.add_argument('--height', required=False, help='Specify desired input image height', type=int)
 parser.add_argument('--threshold', required=False, help='Confidence threshold to include detection', default=0.75, type=float)
-parser.add_argument('--threads', required=False, help='Limit CPU usage for camera processing', default=10, type=int)
+parser.add_argument('--threads', required=False, help='Worker threads for frame processing', default=50, type=int)
 parser.add_argument('--grpc_address',required=False, default='localhost',  help='Specify url to grpc service. default: localhost')
 parser.add_argument('--grpc_port',required=False, default=9000, help='Specify port to grpc service. default: 9000')
 parser.add_argument('--mqtt_address',required=False, default='localhost',  help='MQTT broker address. default: localhost')
@@ -59,7 +60,7 @@ args = vars(parser.parse_args())
 
 address = "{}:{}".format(args.get('grpc_address'),args.get('grpc_port'))
 
-input = args.get('input')
+input_src = args.get('input')
 model_name = args.get('model_name')
 model_version = args.get('model_version')
 instance_id = args.get('id')
@@ -72,6 +73,7 @@ mqtt_address = args.get('mqtt_address')
 mqtt_port = args.get('mqtt_port')
 mqtt_username = args.get('mqtt_username')
 mqtt_password = args.get('mqtt_password')
+num_threads = args.get('threads')
 
 command_topic = ''.join([header, "/", "cmd", "/", "sensor", "/", "cam", "/", instance_id])
 image_topic = ''.join([header, "/", "image", "/", "sensor", "/", "cam", "/", instance_id])
@@ -81,45 +83,56 @@ curr_frame = None
 curr_timestamp = None
 mode = None
 
-def process_frame(timestamp, id, height, width, frame):
-    if args.get('perf_stats'):
-        start_time = time.perf_counter()
+def frame_worker():
+    while True:
+        data = q.get()
 
-    if mode == 'mqtt':
-        frame = base64.b64decode(frame)
-        frame = np.frombuffer(frame, dtype=np.uint8)
+        timestamp = data[0]
+        id = data[1]
+        height = data[2]
+        width = data[3]
+        frame = data[4]
 
-    inputs = {input_name: frame.tobytes() }
-    results = client.predict(inputs=inputs, model_name=model_name)
+        if args.get('perf_stats'):
+            start_time = time.perf_counter()
 
-    detections = results[0].reshape(-1, 7)
+        if mode == 'mqtt':
+            frame = base64.b64decode(frame)
+            frame = np.frombuffer(frame, dtype=np.uint8)
 
-    objects = []
+        inputs = {input_name: frame.tobytes() }
+        results = client.predict(inputs=inputs, model_name=model_name)
 
-    for i, detection in enumerate(detections):
-        _, class_id, confidence, x_min, y_min, x_max, y_max = detection
+        detections = results[0].reshape(-1, 7)
 
-        if confidence > threshold:
-            x_min = int(x_min * width)
-            y_min = int(y_min * height)
-            x_max = int(x_max * width)
-            y_max = int(y_max * height)
-            w = int(x_max - x_min)
-            h = int(y_max - y_min)
+        objects = []
 
-            if args.get('debug'):
-                print("detection", i , detection)
+        for i, detection in enumerate(detections):
+            _, class_id, confidence, x_min, y_min, x_max, y_max = detection
 
-            objects.append({"id":i, "category":category, "class":int(class_id), "confidence":float(confidence), "bounding_box":{"x": x_min, "y": y_min, "width": w, "height": h}})
+            if confidence > threshold:
+                x_min = int(x_min * width)
+                y_min = int(y_min * height)
+                x_max = int(x_max * width)
+                y_max = int(y_max * height)
+                w = int(x_max - x_min)
+                h = int(y_max - y_min)
 
-    if args.get('perf_stats'):
-        end_time = time.perf_counter()
-        duration = (end_time - start_time) * 1000
-        print('Processing time: {:.2f} ms; speed {:.2f} fps'.format(round(duration, 2), round(1000 / duration, 2)))
+                if args.get('debug'):
+                    print("detection", i , detection)
 
-    mqtt_payload = {"timestamp":timestamp,"id":id,"objects":objects}
-    mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", category, "/", id])
-    mqttc.publish(mqtt_topic, json.dumps(mqtt_payload))
+                objects.append({"id":i, "category":category, "class":int(class_id), "confidence":float(confidence), "bounding_box":{"x": x_min, "y": y_min, "width": w, "height": h}})
+
+        if args.get('perf_stats'):
+            end_time = time.perf_counter()
+            duration = (end_time - start_time) * 1000
+            print('Processing time: {:.2f} ms; speed {:.2f} fps'.format(round(duration, 2), round(1000 / duration, 2)))
+
+        mqtt_payload = {"timestamp":timestamp,"id":id,"objects":objects}
+        mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", category, "/", id])
+        mqttc.publish(mqtt_topic, json.dumps(mqtt_payload))
+
+        q.task_done()
 
 #
 # Create gRPC client
@@ -166,7 +179,7 @@ def on_message(mqttc, obj, msg):
         # Check payload
         if "timestamp" in json_payload and "id" in json_payload and "height" in json_payload and "width" in json_payload and "frame" in json_payload:
             timestamp = json_payload['timestamp'].replace("+00:00", "Z")
-            _thread.start_new_thread( process_frame, (timestamp, json_payload['id'], json_payload['height'], json_payload['width'], json_payload['frame']) )
+            q.put( (timestamp, json_payload['id'], json_payload['height'], json_payload['width'], json_payload['frame']) )
 
 mqttc = mqtt.Client()
 mqttc.on_message = on_message
@@ -182,13 +195,16 @@ mqttc.connect(mqtt_address, int(mqtt_port), 60)
 # Limit OpenCV thread pool
 cv2.setNumThreads(args['threads'])
 
+# Initialise worker queue
+q = queue.Queue(maxsize=0)
+
 # Test for MQTT stream
-if input.startswith('mqtt:'):
-    mqttc.subscribe(input.split(':')[1], 0)
+if input_src.startswith('mqtt:'):
+    mqttc.subscribe(input_src.split(':')[1], 0)
     mode = 'mqtt'
 else:
     vcap = cv2.VideoCapture()
-    status = vcap.open(args['input'])
+    status = vcap.open(input_src)
 
     # Test for camera stream
     if not status:
@@ -199,6 +215,12 @@ else:
     mqttc.subscribe(command_topic, 0)
 
 print('Start processing frames...')
+
+#Starting worker threads
+for i in range(num_threads):
+    worker = threading.Thread(target=frame_worker, args=())
+    worker.setDaemon(True)
+    worker.start()
 
 if mode == 'video':
     mqttc.loop_start()
@@ -229,6 +251,6 @@ if mode == 'video':
         height, width, channels = img.shape
         curr_frame = frame.copy()
 
-        _thread.start_new_thread( process_frame, (timestamp_str, instance_id, height, width, frame) )
+        q.put( (timestamp_str, instance_id, height, width, frame) )
 else:
     mqttc.loop_forever()
