@@ -22,6 +22,7 @@ import numpy as np
 import json
 import os
 import paho.mqtt.client as mqtt
+import pybase64
 import ssl
 import threading
 import queue
@@ -97,7 +98,7 @@ def frame_worker():
             start_time = time.perf_counter()
 
         if mode == 'mqtt':
-            frame = base64.b64decode(frame)
+            frame = pybase64.b64decode(frame, validate=True)
             frame = np.frombuffer(frame, dtype=np.uint8)
 
         inputs = {input_name: frame.tobytes() }
@@ -166,7 +167,7 @@ def on_message(mqttc, obj, msg):
         if curr_frame is None:
             return
 
-        jpeg = base64.b64encode(curr_frame).decode('utf-8')
+        jpeg = pybase64.b64encode(curr_frame).decode('utf-8')
         image_payload = {'timestamp':curr_timestamp.isoformat(timespec='milliseconds').replace("+00:00", "Z"), 'id':instance_id, 'image':jpeg}
         mqttc.publish(image_topic, json.dumps(image_payload))
 
