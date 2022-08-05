@@ -124,14 +124,19 @@ def frame_worker():
 
                 objects.append({"id":i, "category":category, "class":int(class_id), "confidence":float(confidence), "bounding_box":{"x": x_min, "y": y_min, "width": w, "height": h}})
 
+        mqtt_payload = {"timestamp":timestamp,"id":id,"objects":objects}
+        mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", category, "/", id])
+
+        try:
+            pub_result = mqttc.publish(mqtt_topic, json.dumps(mqtt_payload), qos=0, retain=False)
+            pub_result.wait_for_publish()
+        except (ValueError, RuntimeError) as e:
+            print("Failed to publish message:", e)
+
         if args.get('perf_stats'):
             end_time = time.perf_counter()
             duration = (end_time - start_time) * 1000
             print('Processing time: {:.2f} ms; speed {:.2f} fps'.format(round(duration, 2), round(1000 / duration, 2)))
-
-        mqtt_payload = {"timestamp":timestamp,"id":id,"objects":objects}
-        mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", category, "/", id])
-        mqttc.publish(mqtt_topic, json.dumps(mqtt_payload))
 
         q.task_done()
 
@@ -159,31 +164,33 @@ input_name, output_name = get_model_io_names(client, model_name, model_version)
 def on_connect(mqttc, obj, flags, rc):
     print("MQTT connected...")
 
-def on_message(mqttc, obj, msg):
+def on_input_message(mqttc, obj, msg):
     topic = msg.topic
     payload = msg.payload.decode("utf-8")
 
-    if payload == 'getimage':
-        if curr_frame is None:
-            return
+    try:
+        json_payload = json.loads(payload)
+    except JSONDecodeError:
+        return
 
-        jpeg = pybase64.b64encode(curr_frame).decode('utf-8')
-        image_payload = {'timestamp':curr_timestamp.isoformat(timespec='milliseconds').replace("+00:00", "Z"), 'id':instance_id, 'image':jpeg}
-        mqttc.publish(image_topic, json.dumps(image_payload))
+    # Check payload
+    if "timestamp" in json_payload and "id" in json_payload and "height" in json_payload and "width" in json_payload and "frame" in json_payload:
+        timestamp = json_payload['timestamp'].replace("+00:00", "Z")
+        q.put( (timestamp, json_payload['id'], json_payload['height'], json_payload['width'], json_payload['frame']) )
 
-    else:
-        try:
-            json_payload = json.loads(payload)
-        except JSONDecodeError:
-            return
+def on_image_message(mqttc, obj, msg):
+    topic = msg.topic
+    payload = msg.payload.decode("utf-8")
 
-        # Check payload
-        if "timestamp" in json_payload and "id" in json_payload and "height" in json_payload and "width" in json_payload and "frame" in json_payload:
-            timestamp = json_payload['timestamp'].replace("+00:00", "Z")
-            q.put( (timestamp, json_payload['id'], json_payload['height'], json_payload['width'], json_payload['frame']) )
+    if curr_frame is None:
+        return
+
+    jpeg = pybase64.b64encode(curr_frame).decode('utf-8')
+    image_payload = {'timestamp':curr_timestamp.isoformat(timespec='milliseconds').replace("+00:00", "Z"), 'id':instance_id, 'image':jpeg}
+    mqttc.publish(image_topic, json.dumps(image_payload), qos=0, retain=False)
 
 mqttc = mqtt.Client()
-mqttc.on_message = on_message
+mqttc.message_callback_add(image_topic, on_image_message)
 mqttc.on_connect = on_connect
 mqttc.username_pw_set(mqtt_username,mqtt_password)
 
@@ -201,7 +208,9 @@ q = queue.Queue(maxsize=0)
 
 # Test for MQTT stream
 if input_src.startswith('mqtt:'):
-    mqttc.subscribe(input_src.split(':')[1], 0)
+    input_topic = input_src.split(':')[1]
+    mqttc.subscribe(input_topic, 0)
+    mqttc.message_callback_add(input_topic, on_input_message)
     mode = 'mqtt'
 else:
     vcap = cv2.VideoCapture()
