@@ -85,6 +85,16 @@ curr_timestamp = None
 mode = None
 
 def frame_worker():
+    # Setup worker client
+    wmqttc = mqtt.Client()
+    wmqttc.username_pw_set(mqtt_username,mqtt_password)
+
+    if args.get('mqtt_tls'):
+        wmqttc.tls_set(cert_reqs=ssl.CERT_NONE)
+        wmqttc.tls_insecure_set(True)
+
+    wmqttc.connect(mqtt_address, int(mqtt_port), 60)
+
     while True:
         data = q.get()
 
@@ -128,7 +138,7 @@ def frame_worker():
         mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", category, "/", id])
 
         try:
-            pub_result = mqttc.publish(mqtt_topic, json.dumps(mqtt_payload), qos=0, retain=False)
+            pub_result = wmqttc.publish(mqtt_topic, json.dumps(mqtt_payload), qos=0, retain=False)
             pub_result.wait_for_publish()
         except (ValueError, RuntimeError) as e:
             print("Failed to publish message:", e)
