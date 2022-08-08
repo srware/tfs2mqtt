@@ -23,9 +23,9 @@ import json
 import os
 import paho.mqtt.client as mqtt
 import pybase64
+import queue
 import ssl
 import threading
-import queue
 import time
 from client_utils import prepare_certs, get_model_io_names
 from datetime import datetime, timezone
@@ -36,12 +36,11 @@ parser = argparse.ArgumentParser(description='TFS gRPC to MQTT client.')
 parser.add_argument('--input',required=False, default='/dev/video0', help='Specify the video input')
 parser.add_argument('--loop', default=False, action='store_true', help='Loop input video')
 parser.add_argument('--header',required=False, default='tfs2mqtt', help='Specify the MQTT topic header')
-parser.add_argument('--id',required=False, default='camera1', help='Unique identifier for MQTT topic')
 parser.add_argument('--category',required=False, default='object', help='Specify the default detection category')
 parser.add_argument('--width', required=False, help='Specify desired input image width', type=int)
 parser.add_argument('--height', required=False, help='Specify desired input image height', type=int)
 parser.add_argument('--threshold', required=False, help='Confidence threshold to include detection', default=0.75, type=float)
-parser.add_argument('--threads', required=False, help='Worker threads for frame processing', default=50, type=int)
+parser.add_argument('--workers', required=False, help='Workers for frame processing', default=10, type=int)
 parser.add_argument('--grpc_address',required=False, default='localhost',  help='Specify url to grpc service. default: localhost')
 parser.add_argument('--grpc_port',required=False, default=9000, help='Specify port to grpc service. default: 9000')
 parser.add_argument('--mqtt_address',required=False, default='localhost',  help='MQTT broker address. default: localhost')
@@ -61,10 +60,9 @@ args = vars(parser.parse_args())
 
 address = "{}:{}".format(args.get('grpc_address'),args.get('grpc_port'))
 
-input_src = args.get('input')
+input_topic = args.get('input')
 model_name = args.get('model_name')
 model_version = args.get('model_version')
-instance_id = args.get('id')
 header = args.get('header')
 category = args.get('category')
 threshold = args.get('threshold')
@@ -74,27 +72,9 @@ mqtt_address = args.get('mqtt_address')
 mqtt_port = args.get('mqtt_port')
 mqtt_username = args.get('mqtt_username')
 mqtt_password = args.get('mqtt_password')
-num_threads = args.get('threads')
-
-command_topic = ''.join([header, "/", "cmd", "/", "sensor", "/", "cam", "/", instance_id])
-image_topic = ''.join([header, "/", "image", "/", "sensor", "/", "cam", "/", instance_id])
-
-# Camera frame & timestamp
-curr_frame = None
-curr_timestamp = None
-mode = None
+num_workers = args.get('workers')
 
 def frame_worker():
-    # Setup worker client
-    wmqttc = mqtt.Client()
-    wmqttc.username_pw_set(mqtt_username,mqtt_password)
-
-    if args.get('mqtt_tls'):
-        wmqttc.tls_set(cert_reqs=ssl.CERT_NONE)
-        wmqttc.tls_insecure_set(True)
-
-    wmqttc.connect(mqtt_address, int(mqtt_port), 60)
-
     while True:
         data = q.get()
 
@@ -107,12 +87,16 @@ def frame_worker():
         if args.get('perf_stats'):
             start_time = time.perf_counter()
 
-        if mode == 'mqtt':
-            frame = pybase64.b64decode(frame, validate=True)
-            frame = np.frombuffer(frame, dtype=np.uint8)
+        frame = pybase64.b64decode(frame, validate=True)
+        frame = np.frombuffer(frame, dtype=np.uint8)
 
         inputs = {input_name: frame.tobytes() }
         results = client.predict(inputs=inputs, model_name=model_name)
+
+        if args.get('perf_stats'):
+            end_time = time.perf_counter()
+            duration = (end_time - start_time) * 1000
+            print('Processing time: {:.2f} ms; speed {:.2f} fps'.format(round(duration, 2), round(1000 / duration, 2)))
 
         detections = results[0].reshape(-1, 7)
 
@@ -138,15 +122,10 @@ def frame_worker():
         mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", category, "/", id])
 
         try:
-            pub_result = wmqttc.publish(mqtt_topic, json.dumps(mqtt_payload), qos=0, retain=False)
+            pub_result = mqttp.publish(mqtt_topic, json.dumps(mqtt_payload), qos=0, retain=False)
             pub_result.wait_for_publish()
         except (ValueError, RuntimeError) as e:
             print("Failed to publish message:", e)
-
-        if args.get('perf_stats'):
-            end_time = time.perf_counter()
-            duration = (end_time - start_time) * 1000
-            print('Processing time: {:.2f} ms; speed {:.2f} fps'.format(round(duration, 2), round(1000 / duration, 2)))
 
         q.task_done()
 
@@ -168,14 +147,14 @@ client = make_grpc_client(address, tls_config=tls_config)
 input_name, output_name = get_model_io_names(client, model_name, model_version)
 
 #
-# Create MQTT client
+# Create MQTT clients
 #
 
 def on_connect(mqttc, obj, flags, rc):
     print("MQTT connected...")
+    mqttc.subscribe(input_topic, 0)
 
 def on_input_message(mqttc, obj, msg):
-    topic = msg.topic
     payload = msg.payload.decode("utf-8")
 
     try:
@@ -188,89 +167,35 @@ def on_input_message(mqttc, obj, msg):
         timestamp = json_payload['timestamp'].replace("+00:00", "Z")
         q.put( (timestamp, json_payload['id'], json_payload['height'], json_payload['width'], json_payload['frame']) )
 
-def on_image_message(mqttc, obj, msg):
-    topic = msg.topic
-    payload = msg.payload.decode("utf-8")
-
-    if curr_frame is None:
-        return
-
-    jpeg = pybase64.b64encode(curr_frame).decode('utf-8')
-    image_payload = {'timestamp':curr_timestamp.isoformat(timespec='milliseconds').replace("+00:00", "Z"), 'id':instance_id, 'image':jpeg}
-    mqttc.publish(image_topic, json.dumps(image_payload), qos=0, retain=False)
-
-mqttc = mqtt.Client()
-mqttc.message_callback_add(image_topic, on_image_message)
-mqttc.on_connect = on_connect
-mqttc.username_pw_set(mqtt_username,mqtt_password)
+mqtts = mqtt.Client()
+mqtts.message_callback_add(input_topic, on_input_message)
+mqtts.on_connect = on_connect
+mqtts.username_pw_set(mqtt_username,mqtt_password)
 
 if args.get('mqtt_tls'):
-    mqttc.tls_set(cert_reqs=ssl.CERT_NONE)
-    mqttc.tls_insecure_set(True)
+    mqtts.tls_set(cert_reqs=ssl.CERT_NONE)
+    mqtts.tls_insecure_set(True)
 
-mqttc.connect(mqtt_address, int(mqtt_port), 60)
+mqtts.connect(mqtt_address, int(mqtt_port), 60)
 
-# Limit OpenCV thread pool
-cv2.setNumThreads(args['threads'])
+mqttp = mqtt.Client()
+mqttp.username_pw_set(mqtt_username,mqtt_password)
+
+if args.get('mqtt_tls'):
+    mqttp.tls_set(cert_reqs=ssl.CERT_NONE)
+    mqttp.tls_insecure_set(True)
+
+mqttp.connect(mqtt_address, int(mqtt_port), 60)
 
 # Initialise worker queue
 q = queue.Queue(maxsize=0)
 
-# Test for MQTT stream
-if input_src.startswith('mqtt:'):
-    input_topic = input_src.split(':')[1]
-    mqttc.subscribe(input_topic, 0)
-    mqttc.message_callback_add(input_topic, on_input_message)
-    mode = 'mqtt'
-else:
-    vcap = cv2.VideoCapture()
-    status = vcap.open(input_src)
-
-    # Test for camera stream
-    if not status:
-        print('Failed to open video stream... quitting!')
-        quit()
-
-    mode = 'video'
-    mqttc.subscribe(command_topic, 0)
-
 print('Start processing frames...')
 
-#Starting worker threads
-for i in range(num_threads):
+#Starting workers
+for i in range(num_workers):
     worker = threading.Thread(target=frame_worker, args=())
     worker.setDaemon(True)
     worker.start()
 
-if mode == 'video':
-    mqttc.loop_start()
-    while(1):
-        status, img = vcap.read()
-
-        if not status:
-            # Loop video if applicable
-            if not args.get('loop'):
-                print('No more frames available... Quitting!')
-                quit()
-
-            vcap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            status, img = vcap.read()
-
-            if not status:
-                quit()
-
-        curr_timestamp = datetime.now(timezone.utc)
-        timestamp_str = curr_timestamp.isoformat(timespec='milliseconds').replace("+00:00", "Z")
-
-        # Scale if requested
-        if args.get('width') and args.get('height'):
-            img = cv2.resize(img, (args.get('width'), args.get('height')))
-
-        # Get original image shape
-        ret, frame = cv2.imencode(".jpg", img)
-        height, width, channels = img.shape
-        curr_frame = frame.copy()
-
-        q.put( (timestamp_str, instance_id, height, width, frame) )
-else:
-    mqttc.loop_forever()
+mqtts.loop_forever()
