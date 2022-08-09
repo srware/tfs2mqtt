@@ -106,8 +106,8 @@ def frame_worker():
                     fastdct=True,
                 )
 
-        inputs = {input_name: frame }
-        results = client.predict(inputs=inputs, model_name=model_name)
+        inputs = {input_name: frame}
+        results = client.predict(inputs=inputs, model_name=model_name, model_version=model_version)
 
         if args.get('perf_stats'):
             end_time = time.perf_counter()
