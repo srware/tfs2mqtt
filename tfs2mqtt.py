@@ -143,8 +143,6 @@ def frame_worker():
         except (ValueError, RuntimeError) as e:
             print("Failed to publish message:", e)
 
-        q.task_done()
-
 #
 # Create gRPC client
 #
@@ -208,7 +206,7 @@ cv2.setNumThreads(num_workers)
 mqttp.connect(mqtt_address, int(mqtt_port), 60)
 
 # Initialise worker queue
-q = queue.Queue(maxsize=0)
+q = queue.SimpleQueue()
 
 print('Start processing frames...')
 
