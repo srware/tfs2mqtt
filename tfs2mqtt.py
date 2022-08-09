@@ -24,6 +24,7 @@ import os
 import paho.mqtt.client as mqtt
 import pybase64
 import queue
+import simplejpeg
 import ssl
 import threading
 import time
@@ -33,8 +34,7 @@ from ovmsclient import make_grpc_client
 
 parser = argparse.ArgumentParser(description='TFS gRPC to MQTT client.')
 
-parser.add_argument('--input',required=False, default='/dev/video0', help='Specify the video input')
-parser.add_argument('--loop', default=False, action='store_true', help='Loop input video')
+parser.add_argument('--input',required=False, default='videopub/stream/#', help='Specify the MQTT topic to subscribe')
 parser.add_argument('--header',required=False, default='tfs2mqtt', help='Specify the MQTT topic header')
 parser.add_argument('--category',required=False, default='object', help='Specify the default detection category')
 parser.add_argument('--width', required=False, help='Specify desired input image width', type=int)
@@ -73,6 +73,8 @@ mqtt_port = args.get('mqtt_port')
 mqtt_username = args.get('mqtt_username')
 mqtt_password = args.get('mqtt_password')
 num_workers = args.get('workers')
+scale_width = args.get('width')
+scale_height = args.get('height')
 
 def frame_worker():
     while True:
@@ -88,9 +90,24 @@ def frame_worker():
             start_time = time.perf_counter()
 
         frame = pybase64.b64decode(frame, validate=True)
-        frame = np.frombuffer(frame, dtype=np.uint8)
+        frame = np.frombuffer(frame, dtype=np.uint8).tobytes()
 
-        inputs = {input_name: frame.tobytes() }
+        # Scale if requested
+        if scale_width and scale_height:
+            height, width, colorspace, subsampling = simplejpeg.decode_jpeg_header(frame)
+
+            if width > scale_width or height > scale_height:
+                frame = simplejpeg.decode_jpeg(frame, fastdct=True, fastupsample=True)
+                frame = cv2.resize(frame, (scale_width, scale_height))
+                frame = simplejpeg.encode_jpeg(
+                    frame,
+                    quality=85,
+                    colorspace='BGR',
+                    colorsubsampling='420',
+                    fastdct=True,
+                )
+
+        inputs = {input_name: frame }
         results = client.predict(inputs=inputs, model_name=model_name)
 
         if args.get('perf_stats'):

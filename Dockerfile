@@ -5,7 +5,7 @@ ARG DEPS="\
     python3-pip \
 "
 
-ADD . /app
+COPY *.py *.txt /app/
 
 ENV DEBIAN_FRONTEND=noninteractive
 

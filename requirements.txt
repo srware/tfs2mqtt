@@ -1,6 +1,6 @@
-futures
 numpy==1.19.5
 opencv-python-headless
 ovmsclient==2022.1
 paho-mqtt
 pybase64
+simplejpeg
