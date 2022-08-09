@@ -202,6 +202,9 @@ if args.get('mqtt_tls'):
     mqttp.tls_set(cert_reqs=ssl.CERT_NONE)
     mqttp.tls_insecure_set(True)
 
+# Limit OpenCV thread pool
+cv2.setNumThreads(num_workers)
+
 mqttp.connect(mqtt_address, int(mqtt_port), 60)
 
 # Initialise worker queue
