@@ -28,17 +28,16 @@ import simplejpeg
 import ssl
 import threading
 import time
-from client_utils import prepare_certs, get_model_io_names
+from client_utils import prepare_certs, get_model_io_names, get_model_input_shape
 from datetime import datetime, timezone
 from ovmsclient import make_grpc_client
 
 parser = argparse.ArgumentParser(description='TFS gRPC to MQTT client.')
 
 parser.add_argument('--input',required=False, default='videopub/stream/#', help='Specify the MQTT topic to subscribe')
+parser.add_argument('--scale_input', default=False, action='store_true', help='Scale the input to the correct resolution for the model')
 parser.add_argument('--header',required=False, default='tfs2mqtt', help='Specify the MQTT topic header')
 parser.add_argument('--category',required=False, default='object', help='Specify the default detection category')
-parser.add_argument('--width', required=False, help='Specify desired input image width', type=int)
-parser.add_argument('--height', required=False, help='Specify desired input image height', type=int)
 parser.add_argument('--threshold', required=False, help='Confidence threshold to include detection', default=0.75, type=float)
 parser.add_argument('--workers', required=False, help='Workers for frame processing', default=10, type=int)
 parser.add_argument('--grpc_address',required=False, default='localhost',  help='Specify url to grpc service. default: localhost')
@@ -73,8 +72,7 @@ mqtt_port = args.get('mqtt_port')
 mqtt_username = args.get('mqtt_username')
 mqtt_password = args.get('mqtt_password')
 num_workers = args.get('workers')
-scale_width = args.get('width')
-scale_height = args.get('height')
+scale_input = args.get('scale_input')
 
 def frame_worker():
     while True:
@@ -93,12 +91,13 @@ def frame_worker():
         frame = np.frombuffer(frame, dtype=np.uint8).tobytes()
 
         # Scale if requested
-        if scale_width and scale_height:
+        if scale_input:
+            # Decode JPEG header
             height, width, colorspace, subsampling = simplejpeg.decode_jpeg_header(frame)
 
-            if width > scale_width or height > scale_height:
+            if height > input_shape[1] or width > input_shape[2]:
                 frame = simplejpeg.decode_jpeg(frame, fastdct=True, fastupsample=True)
-                frame = cv2.resize(frame, (scale_width, scale_height))
+                frame = cv2.resize(frame, (input_shape[2], input_shape[1]))
                 frame = simplejpeg.encode_jpeg(
                     frame,
                     quality=85,
@@ -112,8 +111,8 @@ def frame_worker():
 
         if args.get('perf_stats'):
             end_time = time.perf_counter()
-            duration = (end_time - start_time) * 1000
-            print('Processing time: {:.2f} ms; speed {:.2f} fps'.format(round(duration, 2), round(1000 / duration, 2)))
+            duration = end_time - start_time
+            print('Processing time:', duration)
 
         detections = results[0].reshape(-1, 7)
 
@@ -162,6 +161,7 @@ if args.get('grpc_tls'):
 
 client = make_grpc_client(address, tls_config=tls_config)
 input_name, output_name = get_model_io_names(client, model_name, model_version)
+input_shape = get_model_input_shape(client, model_name, model_version)
 
 #
 # Create MQTT clients
