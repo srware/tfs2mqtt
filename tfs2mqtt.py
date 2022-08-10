@@ -73,75 +73,108 @@ mqtt_username = args.get('mqtt_username')
 mqtt_password = args.get('mqtt_password')
 num_workers = args.get('workers')
 scale_input = args.get('scale_input')
+perf_stats = args.get('perf_stats')
+
+def process_payload(payload):
+    try:
+        json_payload = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+
+    # Check payload
+    if "timestamp" in json_payload and \
+       "id" in json_payload and \
+       "height" in json_payload and \
+       "width" in json_payload and \
+       "frame" in json_payload:
+       return [
+              json_payload['timestamp'].replace("+00:00", "Z"),
+              json_payload['id'],
+              json_payload['height'],
+              json_payload['width'],
+              json_payload['frame']
+              ]
+
+    return None
+
+
+def process_detections(detections, height, width):
+    objects = []
+
+    for i, detection in enumerate(detections):
+        _, class_id, confidence, x_min, y_min, x_max, y_max = detection
+
+        if confidence > threshold:
+            x_min = int(x_min * width)
+            y_min = int(y_min * height)
+            x_max = int(x_max * width)
+            y_max = int(y_max * height)
+            w = int(x_max - x_min)
+            h = int(y_max - y_min)
+
+            if args.get('debug'):
+                print("detection", i , detection)
+
+            objects.append({"id":i, "category":category, "class":int(class_id), "confidence":float(confidence), "bounding_box":{"x": x_min, "y": y_min, "width": w, "height": h}})
+
+    return objects
+
+
+def process_frame(frame, height, width):
+    frame = pybase64.b64decode(frame, validate=True)
+    frame = np.frombuffer(frame, dtype=np.uint8).tobytes()
+
+    # Scale if requested
+    if scale_input:
+        if height > input_shape[1] or width > input_shape[2]:
+            frame = simplejpeg.decode_jpeg(frame, fastdct=True, fastupsample=True)
+            frame = cv2.resize(frame, (input_shape[2], input_shape[1]))
+            frame = simplejpeg.encode_jpeg(
+                frame,
+                quality=85,
+                colorspace='BGR',
+                colorsubsampling='420',
+                fastdct=True,
+            )
+
+    inputs = {input_name: frame}
+    results = client.predict(inputs=inputs, model_name=model_name, model_version=model_version)
+
+    return results
+
 
 def frame_worker():
     while True:
         data = q.get()
+        payload = process_payload(data)
 
-        timestamp = data[0]
-        id = data[1]
-        height = data[2]
-        width = data[3]
-        frame = data[4]
+        if payload is None:
+            q.task_done()
+            return
 
-        if args.get('perf_stats'):
+        timestamp = payload[0]
+        id = payload[1]
+        height = payload[2]
+        width = payload[3]
+        frame = payload[4]
+
+        if perf_stats:
             start_time = time.perf_counter()
 
-        frame = pybase64.b64decode(frame, validate=True)
-        frame = np.frombuffer(frame, dtype=np.uint8).tobytes()
+        results = process_frame(frame, height, width)
+        results = results[0].reshape(-1, 7)
+        objects = process_detections(results, height, width)
 
-        # Scale if requested
-        if scale_input:
-            # Decode JPEG header
-            height, width, colorspace, subsampling = simplejpeg.decode_jpeg_header(frame)
-
-            if height > input_shape[1] or width > input_shape[2]:
-                frame = simplejpeg.decode_jpeg(frame, fastdct=True, fastupsample=True)
-                frame = cv2.resize(frame, (input_shape[2], input_shape[1]))
-                frame = simplejpeg.encode_jpeg(
-                    frame,
-                    quality=85,
-                    colorspace='BGR',
-                    colorsubsampling='420',
-                    fastdct=True,
-                )
-
-        inputs = {input_name: frame}
-        results = client.predict(inputs=inputs, model_name=model_name, model_version=model_version)
-
-        if args.get('perf_stats'):
+        if perf_stats:
             end_time = time.perf_counter()
             duration = end_time - start_time
             print('Processing time:', duration)
 
-        detections = results[0].reshape(-1, 7)
-
-        objects = []
-
-        for i, detection in enumerate(detections):
-            _, class_id, confidence, x_min, y_min, x_max, y_max = detection
-
-            if confidence > threshold:
-                x_min = int(x_min * width)
-                y_min = int(y_min * height)
-                x_max = int(x_max * width)
-                y_max = int(y_max * height)
-                w = int(x_max - x_min)
-                h = int(y_max - y_min)
-
-                if args.get('debug'):
-                    print("detection", i , detection)
-
-                objects.append({"id":i, "category":category, "class":int(class_id), "confidence":float(confidence), "bounding_box":{"x": x_min, "y": y_min, "width": w, "height": h}})
-
         mqtt_payload = {"timestamp":timestamp,"id":id,"objects":objects}
         mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", category, "/", id])
+        mqttp.publish(mqtt_topic, json.dumps(mqtt_payload), qos=0, retain=False)
 
-        try:
-            pub_result = mqttp.publish(mqtt_topic, json.dumps(mqtt_payload), qos=0, retain=False)
-            pub_result.wait_for_publish()
-        except (ValueError, RuntimeError) as e:
-            print("Failed to publish message:", e)
+        q.task_done()
 
 #
 # Create gRPC client
@@ -170,17 +203,10 @@ def on_connect(mqttc, obj, flags, rc):
     mqttc.subscribe(input_topic, 0)
 
 def on_input_message(mqttc, obj, msg):
-    payload = msg.payload.decode("utf-8")
-
     try:
-        json_payload = json.loads(payload)
-    except JSONDecodeError:
+        q.put_nowait(msg.payload.decode("utf-8"))
+    except queue.Full:
         return
-
-    # Check payload
-    if "timestamp" in json_payload and "id" in json_payload and "height" in json_payload and "width" in json_payload and "frame" in json_payload:
-        timestamp = json_payload['timestamp'].replace("+00:00", "Z")
-        q.put( (timestamp, json_payload['id'], json_payload['height'], json_payload['width'], json_payload['frame']) )
 
 mqtts = mqtt.Client()
 mqtts.message_callback_add(input_topic, on_input_message)
@@ -206,14 +232,13 @@ cv2.setNumThreads(num_workers)
 mqttp.connect(mqtt_address, int(mqtt_port), 60)
 
 # Initialise worker queue
-q = queue.SimpleQueue()
+q = queue.Queue(maxsize=num_workers * 2)
 
 print('Start processing frames...')
 
 #Starting workers
 for i in range(num_workers):
-    worker = threading.Thread(target=frame_worker, args=())
-    worker.setDaemon(True)
+    worker = threading.Thread(target=frame_worker, daemon=True, args=())
     worker.start()
 
 mqtts.loop_forever()

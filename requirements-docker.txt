@@ -1,0 +1,8 @@
+numpy==1.23.1
+grpcio==1.44
+protobuf==3.19.4
+requests==2.27.1
+opencv-python-headless
+paho-mqtt
+pybase64
+simplejpeg
