@@ -153,7 +153,7 @@ def frame_worker():
             return
 
         timestamp = payload[0]
-        id = payload[1]
+        stream_id = payload[1]
         height = payload[2]
         width = payload[3]
         frame = payload[4]
@@ -170,8 +170,8 @@ def frame_worker():
             duration = end_time - start_time
             print('Processing time:', duration)
 
-        mqtt_payload = {"timestamp":timestamp,"id":id,"objects":objects}
-        mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", category, "/", id])
+        mqtt_payload = {"timestamp":timestamp,"id":stream_id,"objects":objects}
+        mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", stream_id, "/", category`])
         mqttp.publish(mqtt_topic, json.dumps(mqtt_payload), qos=0, retain=False)
 
         q.task_done()
@@ -226,10 +226,10 @@ if args.get('mqtt_tls'):
     mqttp.tls_set(cert_reqs=ssl.CERT_NONE)
     mqttp.tls_insecure_set(True)
 
+mqttp.connect(mqtt_address, int(mqtt_port), 60)
+
 # Limit OpenCV thread pool
 cv2.setNumThreads(num_workers)
-
-mqttp.connect(mqtt_address, int(mqtt_port), 60)
 
 # Initialise worker queue
 q = queue.Queue(maxsize=num_workers * 2)
