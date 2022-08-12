@@ -138,7 +138,11 @@ def process_frame(frame, height, width):
             )
 
     inputs = {input_name: frame}
-    results = client.predict(inputs=inputs, model_name=model_name, model_version=model_version)
+
+    try:
+        results = client.predict(inputs=inputs, model_name=model_name, model_version=model_version)
+    except:
+        return None
 
     return results
 
@@ -150,7 +154,7 @@ def frame_worker():
 
         if payload is None:
             q.task_done()
-            return
+            continue
 
         timestamp = payload[0]
         stream_id = payload[1]
@@ -162,13 +166,18 @@ def frame_worker():
             start_time = time.perf_counter()
 
         results = process_frame(frame, height, width)
+
+        if results is None:
+            q.task_done()
+            continue
+
         results = results[0].reshape(-1, 7)
         objects = process_detections(results, height, width)
 
         if perf_stats:
             end_time = time.perf_counter()
             duration = end_time - start_time
-            print('Processing time:', duration)
+            print("ID:", stream_id, '', 'Processing time:', duration)
 
         mqtt_payload = {"timestamp":timestamp,"id":stream_id,"objects":objects}
         mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", stream_id, "/", category])
@@ -191,8 +200,13 @@ if args.get('grpc_tls'):
     }
 
 client = make_grpc_client(address, tls_config=tls_config)
-input_name, output_name = get_model_io_names(client, model_name, model_version)
-input_shape = get_model_input_shape(client, model_name, model_version)
+
+try:
+    input_name, output_name = get_model_io_names(client, model_name, model_version)
+    input_shape = get_model_input_shape(client, model_name, model_version)
+except Exception as error:
+    print(error)
+    quit()
 
 #
 # Create MQTT clients
