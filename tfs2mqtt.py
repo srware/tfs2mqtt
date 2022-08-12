@@ -171,7 +171,7 @@ def frame_worker():
             print('Processing time:', duration)
 
         mqtt_payload = {"timestamp":timestamp,"id":stream_id,"objects":objects}
-        mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", stream_id, "/", category`])
+        mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", stream_id, "/", category])
         mqttp.publish(mqtt_topic, json.dumps(mqtt_payload), qos=0, retain=False)
 
         q.task_done()
