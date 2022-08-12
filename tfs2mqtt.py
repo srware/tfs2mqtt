@@ -75,6 +75,8 @@ num_workers = args.get('workers')
 scale_input = args.get('scale_input')
 perf_stats = args.get('perf_stats')
 
+mqtt_connected = False
+
 def process_payload(payload):
     try:
         json_payload = json.loads(payload)
@@ -179,9 +181,10 @@ def frame_worker():
             duration = end_time - start_time
             print("ID:", stream_id, '', 'Processing time:', duration)
 
-        mqtt_payload = {"timestamp":timestamp,"id":stream_id,"objects":objects}
-        mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", stream_id, "/", category])
-        mqttp.publish(mqtt_topic, json.dumps(mqtt_payload), qos=0, retain=False)
+        if mqtt_connected:
+            mqtt_payload = {"timestamp":timestamp,"id":stream_id,"objects":objects}
+            mqtt_topic = ''.join([header, "/", "data", "/", "sensor", "/", stream_id, "/", category])
+            mqttp.publish(mqtt_topic, json.dumps(mqtt_payload), qos=0, retain=False)
 
         q.task_done()
 
@@ -216,6 +219,14 @@ def on_connect(mqttc, obj, flags, rc):
     print("MQTT connected...")
     mqttc.subscribe(input_topic, 0)
 
+def on_publisher_connect(mqttc, obj, flags, rc):
+    global mqtt_connected
+    mqtt_connected = True
+
+def on_publisher_disconnect(mqttc):
+    global mqtt_connected
+    mqtt_connected = False
+
 def on_input_message(mqttc, obj, msg):
     try:
         q.put_nowait(msg.payload.decode("utf-8"))
@@ -234,6 +245,8 @@ if args.get('mqtt_tls'):
 mqtts.connect(mqtt_address, int(mqtt_port), 60)
 
 mqttp = mqtt.Client()
+mqttp.on_connect = on_publisher_connect
+mqttp.on_disconnect = on_publisher_disconnect
 mqttp.username_pw_set(mqtt_username,mqtt_password)
 
 if args.get('mqtt_tls'):
@@ -255,4 +268,5 @@ for i in range(num_workers):
     worker = threading.Thread(target=frame_worker, daemon=True, args=())
     worker.start()
 
+mqttp.loop_start()
 mqtts.loop_forever()
